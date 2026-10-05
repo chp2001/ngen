@@ -6,6 +6,7 @@
 #include "LayerData.hpp"
 #include "Simulation_Time.hpp"
 #include "State_Exception.hpp"
+#include <UnitsHelper.hpp>
 
 #if NGEN_WITH_MPI
 #include "HY_Features_MPI.hpp"
@@ -130,21 +131,29 @@ namespace ngen
                 std::string output = std::to_string(output_time_index)+","+current_timestamp+","+
                                     r_c->get_output_line_for_timestep(output_time_index)+"\n";
                 r_c->write_output(output);
-                //TODO put this somewhere else.  For now, just trying to ensure we get m^3/s into nexus output
-                double area;
-                try{
-                    area = catchment_data->get_feature(id)->get_property("areasqkm").as_real_number();
+                std::string main_output_var = r_c->get_bmi_main_output_var();
+                std::string main_output_var_units = r_c->get_bmi_model()->GetVarUnits(main_output_var);
+                if (main_output_var_units != "m^3/s") {
+                    if (main_output_var_units != "1" && main_output_var_units != "m" && main_output_var_units.empty()) {
+                        // Try run conversion to m/h to prep for m^3/s conversion
+                        response = UnitsHelper::get_converted_value(main_output_var_units, response, "m/h");
+                    }
+                    //TODO put this somewhere else.  For now, just trying to ensure we get m^3/s into nexus output
+                    double area;
+                    try{
+                        area = catchment_data->get_feature(id)->get_property("areasqkm").as_real_number();
+                    }
+                    catch(std::invalid_argument &e)
+                    {
+                        area = catchment_data->get_feature(id)->get_property("area_sqkm").as_real_number();
+                    }
+                    double response_m_s = response * (area * 1000000);
+                    //TODO put this somewhere else as well, for now, an implicit assumption is that a module's get_response returns
+                    //m/timestep
+                    //since we are operating on a 1 hour (3600s) dt, we need to scale the output appropriately
+                    //so no response is m^2/hr...m^2/hr * 1hr/3600s = m^3/hr
+                    response = response_m_s / 3600.0;
                 }
-                catch(std::invalid_argument &e)
-                {
-                    area = catchment_data->get_feature(id)->get_property("area_sqkm").as_real_number();
-                }
-                double response_m_s = response * (area * 1000000);
-                //TODO put this somewhere else as well, for now, an implicit assumption is that a module's get_response returns
-                //m/timestep
-                //since we are operating on a 1 hour (3600s) dt, we need to scale the output appropriately
-                //so no response is m^2/hr...m^2/hr * 1hr/3600s = m^3/hr
-                double response_m_h = response_m_s / 3600.0;
                 //update the nexus with this flow
                 for(auto& nexus : features.destination_nexuses(id)) {
                     //TODO in a DENDRITIC network, only one destination nexus per catchment
@@ -153,7 +162,7 @@ namespace ngen
                     if(nexus == nullptr){
                         throw std::runtime_error("Invalid (null) nexus instantiation downstream of "+id+". "+SOURCE_LOC);
                     }
-                    nexus->add_upstream_flow(response_m_h, id, output_time_index);
+                    nexus->add_upstream_flow(response, id, output_time_index);
                     /*std::cerr << "Add water to nexus ID = " << nexus->get_id() << " from catchment ID = " << id << " value = "
                               << response << ", ID = " << id << ", time-index = " << output_time_index << std::endl; */
                     break;
