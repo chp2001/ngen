@@ -68,7 +68,21 @@ namespace realization {
                 // TODO: again, consider whether we should store any historic response, ts_delta, or other var values
                 next_time_step_index++;
             }
-            return get_var_value_as_double(0, get_bmi_main_output_var());
+            // return get_var_value_as_double(0, get_bmi_main_output_var());
+            std::string main_output_var = get_bmi_main_output_var();
+            double response = get_var_value_as_double(0, main_output_var);
+            std::string main_output_var_units = get_bmi_model()->GetVarUnits(main_output_var);
+            // Expected return value is meters per hour
+            if (main_output_var_units.empty() || main_output_var_units == "1") {
+                return response; // Assume correct units if not specified
+            }
+            if (main_output_var_units == "m") {
+                return response; // Meters for the time step (assumed to be per hour), so skip conversion
+            }
+            if (main_output_var_units == "m/h") {
+                return response; // Meters per hour, so no conversion needed
+            }
+            return UnitsHelper::get_converted_value(main_output_var_units, response, "m/h");
         }
 
         time_t Bmi_Module_Formulation::get_variable_time_begin(const std::string &variable_name) {
